@@ -1,0 +1,97 @@
+version: "3.9"
+
+services:
+  # ─── Data layer ──────────────────────────────────────────────────
+  mongodb:
+    image: mongo:7
+    container_name: escalateiq_mongo
+    restart: unless-stopped
+    environment:
+      MONGO_INITDB_ROOT_USERNAME: escalateiq
+      MONGO_INITDB_ROOT_PASSWORD: password
+      MONGO_INITDB_DATABASE: escalateiq
+    ports:
+      - "27017:27017"
+    volumes:
+      - mongo_data:/data/db
+    networks:
+      - escalateiq_net
+
+  redis:
+    image: redis:7-alpine
+    container_name: escalateiq_redis
+    restart: unless-stopped
+    ports:
+      - "6379:6379"
+    networks:
+      - escalateiq_net
+
+  # ─── Python embedding microservice ───────────────────────────────
+  embedding_service:
+    build:
+      context: ./embedding_service
+      dockerfile: Dockerfile
+    container_name: escalateiq_embedding
+    restart: unless-stopped
+    ports:
+      - "8001:8001"
+    environment:
+      - PORT=8001
+    networks:
+      - escalateiq_net
+
+  # ─── Node.js API backend ─────────────────────────────────────────
+  backend:
+    build:
+      context: ./backend
+      dockerfile: Dockerfile
+    container_name: escalateiq_backend
+    restart: unless-stopped
+    ports:
+      - "5000:5000"
+    environment:
+      - NODE_ENV=development
+      - PORT=5000
+      - MONGODB_URI=mongodb://escalateiq:password@mongodb:27017/escalateiq?authSource=admin
+      - REDIS_URL=redis://redis:6379
+      - EMBEDDING_SERVICE_URL=http://embedding_service:8001
+    env_file:
+      - ./backend/.env
+    depends_on:
+      - mongodb
+      - redis
+      - embedding_service
+    volumes:
+      - ./backend:/app
+      - /app/node_modules
+      - ./backend/data:/app/data
+    networks:
+      - escalateiq_net
+
+  # ─── Next.js frontend ────────────────────────────────────────────
+  frontend:
+    build:
+      context: ./frontend
+      dockerfile: Dockerfile
+    container_name: escalateiq_frontend
+    restart: unless-stopped
+    ports:
+      - "3000:3000"
+    environment:
+      - NEXT_PUBLIC_API_URL=http://localhost:5000
+      - NEXT_PUBLIC_WS_URL=ws://localhost:5000
+    depends_on:
+      - backend
+    volumes:
+      - ./frontend:/app
+      - /app/node_modules
+      - /app/.next
+    networks:
+      - escalateiq_net
+
+volumes:
+  mongo_data:
+
+networks:
+  escalateiq_net:
+    driver: bridge
